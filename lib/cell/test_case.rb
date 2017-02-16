@@ -63,7 +63,7 @@ module Cell
       def setup
         @controller ||= Class.new(ActionController::Base).new
         @request    ||= action_controller_test_request
-        @response   = ::ActionController::TestResponse.new
+        @response   = nil
         @controller.request = @request
         @controller.response = @response
         @controller.params = {}
