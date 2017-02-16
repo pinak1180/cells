@@ -1,173 +1,87 @@
 module Cell
-  # Test your cells.
-  #
-  # This class is roughly equal to ActionController::TestCase, exposing the same semantics. It will try
-  # to infer the tested cell name from the test name if you use declarative testing. You can also set it
-  # with TestCase.tests.
-  #
-  # A declarative test would look like
-  #
-  #   class SellOutTest < Cell::TestCase
-  #     tests ShoppingCartCell
-  #
-  #     it "should be rendered nicely" do
-  #       invoke :order_button, :items => @fixture_items
-  #
-  #       assert_select "button", "Order now!"
-  #     end
-  #
-  # You can also do stuff yourself, like
-  #
-  #     it "should be rendered even nicer" do
-  #       html = render_cell(:shopping_cart, :order_button, , :items => @fixture_items)
-  #       assert_selector "button", "Order now!", html
-  #     end
-  #
-  # Or even unit test your cell:
-  #
-  #     it "should provide #default_items" do
-  #       assert_equal [@item1, @item2], cell(:shopping_cart).default_items
-  #     end
-  #
-  # == Test helpers
-  #
-  # Basically, we got these new methods:
-  #
-  # +invoke+::  Renders the passed +state+ with your tested cell. You may pass options like in #render_cell.
-  # +render_cell+:: As in your views. Will return the rendered view.
-  # +assert_selector+:: Like #assert_select except that the last argument is the html markup you wanna test.
-  # +cell+:: Gives you a cell instance for unit testing and stuff.
-  class TestCase < ActiveSupport::TestCase
-    module AssertSelect
-      # Invokes assert_select for the last argument, the +content+ string.
-      #
-      # Example:
-      #   assert_selector "h1", "The latest and greatest!", "<h1>The latest and greatest!</h1>"
-      #
-      # would be true.
-      def assert_selector(*args, &block)
-        rails_assert_select(HTML::Document.new(args.pop).root, *args, &block)
+  # Builder methods and Capybara support.
+  # This gets included into Test::Unit, MiniTest::Spec, etc.
+  module Testing
+    def cell(name, *args)
+      cell_for(ViewModel, name, *args)
+    end
+
+    def concept(name, *args)
+      cell_for(Concept, name, *args)
+    end
+
+  private
+    def cell_for(baseclass, name, model=nil, options={})
+      options[:context] ||= {}
+      options[:context][:controller] = controller
+
+      cell = baseclass.cell(name, model, options)
+
+      cell.extend(Capybara) if Cell::Testing.capybara? # leaving this here as most people use Capybara.
+      # apparently it's ok to only override ViewModel#call and capybararize the result.
+      # when joining in a Collection, the joint will still be capybararized.
+      cell
+    end
+
+
+    # Set this to true if you have Capybara loaded. Happens automatically in Cell::TestCase.
+    def self.capybara=(value)
+      @capybara = value
+    end
+
+    def self.capybara?
+      @capybara
+    end
+
+    # Extends ViewModel#call by injecting Capybara support.
+    module Capybara
+      module ToS
+        def to_s
+          native.to_s
+        end
       end
 
-      # Invokes assert_select on the markup set by the last #invoke.
-      #
-      # Example:
-      #   invoke :latest
-      #   assert_select "h1", "The latest and greatest!"
-      def assert_select(*args, &block)
-        super(HTML::Document.new(last_invoke).root, *args, &block)
+      def call(*)
+        ::Capybara.string(super).extend(ToS)
       end
     end
 
-    module CommonTestMethods
-      def setup
-        @controller ||= Class.new(ActionController::Base).new
-        @request    ||= action_controller_test_request
-        @response   = ::ActionController::TestResponse.new
-        @controller.request = @request
-        @controller.response = @response
-        @controller.params = {}
-      end
 
-      # Runs the block while computing the instance variables diff from before and after.
-      def extract_state_ivars_for(cell)
-        before  = cell.instance_variables
-        yield
-        after   = cell.instance_variables
+    # Rails specific.
+    def controller_for(controller_class)
+      # TODO: test without controller.
+      return unless controller_class
 
-        Hash[(after - before).collect do |var|
-          next if var =~ /^@_/
-          [var[1, var.length].to_sym, cell.instance_variable_get(var)]
-        end.compact]
+      controller_class.new.tap do |ctl|
+        ctl.request = action_controller_test_request
+        ctl.instance_variable_set :@routes, ::Rails.application.routes.url_helpers
       end
-    
+    end
+
+    # Rails specific.
     def action_controller_test_request
-        if ::Rails.version.start_with?('5')
-          ::ActionController::TestRequest.create
-        else
-          ::ActionController::TestRequest.new
-        end
+      ## Rails 5 no longer supports creating a TestRequest without
+      ## providing args to the initializer however we can imitate the
+      ## original behaviour using .create whilst allowing fallbacks
+      ## to the original for older versions of Rails.
+      if ::Rails.version.start_with?('5')
+        ::ActionController::TestRequest.create
+      else
+        ::ActionController::TestRequest.new
       end
     end
 
-
-    module TestMethods
-      include CommonTestMethods
-
-      attr_reader :last_invoke, :subject_cell, :view_assigns
-
-      # Use this for functional tests of your application cells.
-      #
-      # Example:
-      #   should "spit out a h1 title" do
-      #     html = render_cell(:news, :latest)
-      #     assert_select html, "h1", "The latest and greatest!"
-      def render_cell(name, state, *args)
-        # DISCUSS: should we allow passing a block here, just as in controllers?
-        @subject_cell = ::Cell::Rails.cell_for(name, @controller, *args)
-        @view_assigns = extract_state_ivars_for(@subject_cell) do
-          @last_invoke = @subject_cell.render_state(state, *args)
-        end
-
-        @last_invoke
-      end
-
-      # Builds an instance of <tt>name</tt>Cell for unit testing.
-      # Passes the optional block to <tt>cell.instance_eval</tt>.
-      #
-      # Example:
-      #   assert_equal "Doo Dumm Dumm..." cell(:bassist).play
-      def cell(name, *args, &block)
-        Cell::Rails.cell_for(name, @controller, *args).tap do |cell|
-          cell.instance_eval &block if block_given?
-        end
-      end
-
-      # Execute the passed +block+ in a real view context of +cell_class+.
-      # Usually you'd test helpers here.
-      #
-      # Example:
-      #
-      #   assert_equal("<h1>Modularity rocks.</h1>", in_view do content_tag(:h1, "Modularity rocks."))
-      def in_view(cell_class, &block)
-        subject = cell(cell_class)
-        setup_test_states_in(subject) # add #in_view to subject cell.
-        subject.render_state(:in_view, block)
-      end
-
-    protected
-      def setup_test_states_in(cell)
-        cell.instance_eval do
-          def in_view(block=nil)
-            render :inline => "<%= instance_exec(&block) %>", :locals => {:block => block}
-          end
-        end
-      end
+    def controller # FIXME: this won't allow us using let(:controller) in MiniTest.
+      controller_for(self.class.controller_class)
     end
 
-    include TestMethods
-    # imports "their" #assert_select.
-    if ::Rails.const_defined?(:Dom)
-      include ::Rails::Dom::Testing::Assertions::SelectorAssertions
-    else
-      include ActionDispatch::Assertions::SelectorAssertions
-    end
-    alias_method :rails_assert_select, :assert_select # i hate that.
-    include AssertSelect
+    def self.included(base)
+      base.class_eval do
+        extend Uber::InheritableAttr
+        inheritable_attr :controller_class
 
-    extend ActionController::TestCase::Behavior::ClassMethods
-    class_attribute :_controller_class
-
-
-    def invoke(state, *args)
-      @last_invoke = self.class.controller_class.new(@controller).render_state(state, *args)
-    end
-
-    if Cell.rails_version.~("4.0", "4.1")
-      include ActiveSupport::Testing::ConstantLookup
-      def self.determine_default_controller_class(name) # FIXME: fix that in Rails 4.x.
-        determine_constant_from_test_name(name) do |constant|
-          Class === constant #&& constant < ActionController::Metal
+        def self.controller(name) # DSL method for the test.
+          self.controller_class = name
         end
       end
     end
