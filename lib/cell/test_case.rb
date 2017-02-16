@@ -62,7 +62,7 @@ module Cell
     module CommonTestMethods
       def setup
         @controller ||= Class.new(ActionController::Base).new
-        @request    ||= ::ActionController::TestRequest.new
+        @request    ||= action_controller_test_request
         @response   = ::ActionController::TestResponse.new
         @controller.request = @request
         @controller.response = @response
@@ -79,6 +79,14 @@ module Cell
           next if var =~ /^@_/
           [var[1, var.length].to_sym, cell.instance_variable_get(var)]
         end.compact]
+      end
+    
+    def action_controller_test_request
+        if ::Rails.version.start_with?('5')
+          ::ActionController::TestRequest.create
+        else
+          ::ActionController::TestRequest.new
+        end
       end
     end
 
