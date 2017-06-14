@@ -83,10 +83,17 @@ module Cell
     
     def action_controller_test_request
         if ::Rails.version.start_with?('5')
-          ::ActionController::TestRequest.create
+          new_test_request @controller
         else
           ::ActionController::TestRequest.new
         end
+      end
+    def new_test_request(controller)
+       is_above_rails_5_1 ? ::ActionController::TestRequest.create(controller) : ::ActionController::TestRequest.create
+    end
+
+     def is_above_rails_5_1
+         ::ActionController::TestRequest.method(:create).parameters.first == [:req, :controller_class]
       end
     end
 
